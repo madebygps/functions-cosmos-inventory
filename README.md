@@ -1,0 +1,1 @@
+# functions-cosmos-inventory
