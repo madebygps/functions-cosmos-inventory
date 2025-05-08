@@ -7,3 +7,7 @@ fastapi>=0.68.0,<1.0.0
 python-multipart>=0.0.5
 typing-extensions>=4.0.0
 uvicorn>=0.15.0
+azure-cosmos>=4.3.0
+azure-identity
+python-dotenv
+aiohttp

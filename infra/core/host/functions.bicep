@@ -1,52 +1,99 @@
 metadata description = 'Creates an Azure Function in an existing Azure App Service plan.'
+
+@description('Name of the Function App')
 param name string
+
+@description('Azure region where the Function App will be deployed')
 param location string = resourceGroup().location
+
+@description('Tags to apply to the Function App')
 param tags object = {}
 
 // Reference Properties
+@description('Name of the Application Insights resource')
 param applicationInsightsName string = ''
+
+@description('Resource ID of the App Service Plan')
 param appServicePlanId string
+
+@description('Name of the Key Vault resource')
 param keyVaultName string = ''
+
+@description('Whether to enable managed identity')
 param managedIdentity bool = true // Always enable managed identity
+
+@description('Name of the Storage Account')
 param storageAccountName string
 
 // Runtime Properties
+@description('Runtime name for the Function App')
 @allowed([
   'dotnet', 'dotnetcore', 'dotnet-isolated', 'node', 'python', 'java', 'powershell', 'custom'
 ])
 param runtimeName string
+
+@description('Combined runtime name and version string')
 param runtimeNameAndVersion string = '${runtimeName}|${runtimeVersion}'
+
+@description('Runtime version for the Function App')
 param runtimeVersion string
 
 // Function Settings
+@description('Azure Functions extension version')
 @allowed([
   '~4', '~3', '~2', '~1'
 ])
 param extensionVersion string = '~4'
 
 // Microsoft.Web/sites Properties
+@description('Kind of Function App')
 param kind string = 'functionapp,linux'
 
 // Microsoft.Web/sites/config
+@description('List of allowed origins for CORS')
 param allowedOrigins array = []
+
+@description('Whether the Function App should be always on')
 param alwaysOn bool = true
+
+@description('Command line to execute at startup')
 param appCommandLine string = ''
+
+@description('App settings for the Function App')
 @secure()
 param appSettings object = {}
+
+@description('Whether client affinity is enabled')
 param clientAffinityEnabled bool = false
+
+@description('Whether Oryx build should be enabled')
 param enableOryxBuild bool = contains(kind, 'linux')
+
+@description('Scale limit for the Function App')
 param functionAppScaleLimit int = -1
+
+@description('Linux FX version')
 param linuxFxVersion string = runtimeNameAndVersion
+
+@description('Minimum number of elastic instances')
 param minimumElasticInstanceCount int = -1
+
+@description('Number of workers')
 param numberOfWorkers int = -1
+
+@description('Whether to build during deployment')
 param scmDoBuildDuringDeployment bool = true
+
+@description('Whether to use 32-bit worker process')
 param use32BitWorkerProcess bool = false
+
+@description('Path for health check')
 param healthCheckPath string = ''
 
-// Flag to skip role assignment - useful when role already exists
+@description('Flag to skip role assignment - useful when role already exists')
 param skipRoleAssignment bool = false
 
-module functions 'appservice.bicep' = {
+module functionAppModule 'appservice.bicep' = {
   name: '${name}-functions'
   params: {
     name: name
@@ -60,8 +107,8 @@ module functions 'appservice.bicep' = {
     applicationInsightsName: applicationInsightsName
     appServicePlanId: appServicePlanId
     appSettings: union(appSettings, {
-        AzureWebJobsStorage: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}' // Keep connection string as fallback
-        AzureWebJobsStorage__accountName: storage.name // Add managed identity configuration
+        AzureWebJobsStorage: 'DefaultEndpointsProtocol=https;AccountName=${functionStorageAccount.name};AccountKey=${functionStorageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}' // Keep connection string as fallback
+        AzureWebJobsStorage__accountName: functionStorageAccount.name // Add managed identity configuration
         FUNCTIONS_EXTENSION_VERSION: extensionVersion
         FUNCTIONS_WORKER_RUNTIME: 'python'
         PYTHON_ENABLE_WORKER_EXTENSIONS: '1'
@@ -90,7 +137,7 @@ module functions 'appservice.bicep' = {
   }
 }
 
-resource storage 'Microsoft.Storage/storageAccounts@2021-09-01' existing = {
+resource functionStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: storageAccountName
 }
 
@@ -110,14 +157,14 @@ var builtInRoleNames = {
 // Skip role assignment if the flag is set
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!skipRoleAssignment) {
   name: guid(resourceGroup().id, name, builtInRoleNames['Storage Blob Data Contributor'])
-  scope: storage
+  scope: functionStorageAccount
   properties: {
-    principalId: functions.outputs.identityPrincipalId
+    principalId: functionAppModule.outputs.identityPrincipalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', builtInRoleNames['Storage Blob Data Contributor'])
     principalType: 'ServicePrincipal'
   }
 }
 
-output identityPrincipalId string = functions.outputs.identityPrincipalId
-output name string = functions.outputs.name
-output uri string = functions.outputs.uri
+output identityPrincipalId string = functionAppModule.outputs.identityPrincipalId
+output name string = functionAppModule.outputs.name
+output uri string = functionAppModule.outputs.uri

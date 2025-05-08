@@ -1,0 +1,182 @@
+[
+  {
+    "name": "Laptop Stand",
+    "category": "office_supplies",
+    "description": "Adjustable aluminum laptop stand with cooling ventilation",
+    "quantity": 45,
+    "price": 29.99,
+    "tags": ["ergonomic", "aluminum", "portable"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Wireless Mouse",
+    "category": "electronics",
+    "description": "Bluetooth wireless mouse with ergonomic design",
+    "quantity": 78,
+    "price": 24.95,
+    "tags": ["bluetooth", "wireless", "ergonomic"],
+    "status": "in_stock"
+  },
+  {
+    "name": "USB-C Hub",
+    "category": "electronics",
+    "description": "7-in-1 USB-C hub with HDMI, USB 3.0, and SD card reader",
+    "quantity": 32,
+    "price": 39.99,
+    "tags": ["usb-c", "adapter", "multiport"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Mechanical Keyboard",
+    "category": "electronics",
+    "description": "RGB mechanical keyboard with tactile switches",
+    "quantity": 18,
+    "price": 89.99,
+    "tags": ["mechanical", "rgb", "gaming"],
+    "status": "low_stock"
+  },
+  {
+    "name": "Notebook Set",
+    "category": "office_supplies",
+    "description": "Set of 3 ruled notebooks with hardcover",
+    "quantity": 120,
+    "price": 15.50,
+    "tags": ["stationery", "ruled", "hardcover"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Wireless Earbuds",
+    "category": "audio",
+    "description": "Bluetooth 5.2 wireless earbuds with noise cancellation",
+    "quantity": 5,
+    "price": 79.95,
+    "tags": ["bluetooth", "wireless", "noise-cancellation"],
+    "status": "low_stock"
+  },
+  {
+    "name": "Desk Lamp",
+    "category": "office_supplies",
+    "description": "LED desk lamp with adjustable brightness and color temperature",
+    "quantity": 0,
+    "price": 45.99,
+    "tags": ["led", "adjustable", "energy-efficient"],
+    "status": "out_of_stock"
+  },
+  {
+    "name": "External SSD",
+    "category": "storage",
+    "description": "1TB portable external SSD with USB-C connection",
+    "quantity": 25,
+    "price": 129.99,
+    "tags": ["ssd", "portable", "high-speed"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Wireless Charger",
+    "category": "electronics",
+    "description": "15W fast wireless charger pad for smartphones",
+    "quantity": 42,
+    "price": 29.99,
+    "tags": ["wireless", "fast-charging", "qi-compatible"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Cable Organizer",
+    "category": "office_supplies",
+    "description": "Silicone cable management system with adhesive backing",
+    "quantity": 68,
+    "price": 12.99,
+    "tags": ["cable-management", "silicone", "adhesive"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Bluetooth Speaker",
+    "category": "audio",
+    "description": "Portable waterproof bluetooth speaker with 20hr battery",
+    "quantity": 37,
+    "price": 59.99,
+    "tags": ["bluetooth", "waterproof", "portable"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Monitor Stand",
+    "category": "office_supplies",
+    "description": "Dual monitor stand with adjustable height and tilt",
+    "quantity": 15,
+    "price": 89.95,
+    "tags": ["ergonomic", "adjustable", "dual-monitor"],
+    "status": "low_stock"
+  },
+  {
+    "name": "USB Flash Drive",
+    "category": "storage",
+    "description": "64GB USB 3.0 flash drive with metal casing",
+    "quantity": 93,
+    "price": 19.99,
+    "tags": ["usb", "portable", "metal"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Webcam",
+    "category": "electronics",
+    "description": "1080p HD webcam with built-in microphone",
+    "quantity": 0,
+    "price": 49.99,
+    "tags": ["1080p", "video", "conferencing"],
+    "status": "out_of_stock"
+  },
+  {
+    "name": "Noise-Cancelling Headphones",
+    "category": "audio",
+    "description": "Over-ear wireless headphones with active noise cancellation",
+    "quantity": 24,
+    "price": 149.99,
+    "tags": ["wireless", "noise-cancellation", "over-ear"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Desk Organizer",
+    "category": "office_supplies",
+    "description": "Bamboo desk organizer with multiple compartments",
+    "quantity": 56,
+    "price": 34.95,
+    "tags": ["bamboo", "organizer", "eco-friendly"],
+    "status": "in_stock"
+  },
+  {
+    "name": "Wireless Keyboard",
+    "category": "electronics",
+    "description": "Slim wireless keyboard with multi-device support",
+    "quantity": 8,
+    "price": 59.99,
+    "tags": ["wireless", "slim", "multi-device"],
+    "status": "low_stock"
+  },
+  {
+    "name": "Power Bank",
+    "category": "electronics",
+    "description": "20000mAh power bank with dual USB and USB-C outputs",
+    "quantity": 29,
+    "price": 49.95,
+    "tags": ["portable", "high-capacity", "fast-charging"],
+    "status": "in_stock"
+  },
+  {
+    "name": "HDMI Cable",
+    "category": "electronics",
+    "description": "6ft HDMI 2.1 cable with 8K support",
+    "quantity": 85,
+    "price": 14.99,
+    "tags": ["hdmi", "8k", "high-speed"],
+    "status": "in_stock"
+  },
+  {
+    "name": "SD Card",
+    "category": "storage",
+    "description": "128GB microSD card with adapter, Class 10",
+    "quantity": 62,
+    "price": 24.99,
+    "tags": ["microsd", "high-speed", "class-10"],
+    "status": "in_stock"
+  }
+]

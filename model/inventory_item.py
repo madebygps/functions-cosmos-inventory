@@ -1,25 +1,19 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Dict
-from datetime import datetime
+from typing import Optional, List
+from datetime import datetime, timezone
 import uuid
 
 class Item(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    category: str 
-    document_type: str = "item"  
+    category: str  # Used as partition key
     description: Optional[str] = None
     quantity: int = 0
     price: float
-    cost: float
-    supplier_id: Optional[str] = None
-    location: Optional[str] = None 
     tags: List[str] = []
-    status: str = "in_stock" 
-    reorder_point: Optional[int] = None
-    created_at: datetime = Field(default_factory=datetime.now(datetime.timezone.utc))
+    status: str = "in_stock"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
-    metadata: Optional[Dict] = Field(default_factory=dict)
     
     @field_validator('status')
     def validate_status(cls, value):
@@ -33,15 +27,14 @@ class Item(BaseModel):
         data = self.model_dump(by_alias=True)
         if data.get('created_at'):
             data['created_at'] = self.created_at.isoformat()
-        if data.get('updated_at'):
-            data['updated_at'] = self.updated_at.isoformat() if self.updated_at else None
+        if data.get('updated_at') and self.updated_at:
+            data['updated_at'] = self.updated_at.isoformat()
         return data
     
     @classmethod
     def from_dict(cls, data: dict):
         """Create Item from Cosmos DB dictionary"""
-        if 'created_at' in data and isinstance(data['created_at'], str):
-            data['created_at'] = datetime.fromisoformat(data['created_at'])
-        if 'updated_at' in data and isinstance(data['updated_at'], str) and data['updated_at']:
-            data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        for dt_field in ['created_at', 'updated_at']:
+            if dt_field in data and isinstance(data[dt_field], str) and data[dt_field]:
+                data[dt_field] = datetime.fromisoformat(data[dt_field])
         return cls(**data)

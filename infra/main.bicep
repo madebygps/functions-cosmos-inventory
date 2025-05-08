@@ -1,38 +1,39 @@
 targetScope = 'subscription'
 
+@description('Name of the environment which is used to generate a short unique hash used in all resources.')
 @minLength(1)
 @maxLength(64)
-@description('Name of the the environment which is used to generate a short unique hash used in all resources.')
-param name string
+param environmentName string
 
-@minLength(1)
 @description('Primary location for all resources')
+@minLength(1)
 param location string
 
+@description('Name for the resource group. If empty, a default name will be created based on the environment name.')
 param resourceGroupName string = ''
 
-// Optional parameters
+@description('Tags to apply to all resources.')
 param tags object = {}
 
 // Variables
-var prefix = '${name}-${uniqueString(name)}'
-var resourceGroupName_var = resourceGroupName == '' ? 'rg-${name}' : resourceGroupName
-var tags_var = union(tags, { 'azd-env-name': name })
+var prefix = '${environmentName}-${uniqueString(environmentName)}'
+var rgName = resourceGroupName == '' ? 'rg-${environmentName}' : resourceGroupName
+var resourceTags = union(tags, { 'azd-env-name': environmentName })
 
 // Create a resource group
-resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: resourceGroupName_var
+resource resourceGroup 'Microsoft.Resources/resourceGroups@2022-09-01' = {
+  name: rgName
   location: location
-  tags: tags_var
+  tags: resourceTags
 }
 
 // Monitor application with Azure Monitor
-module monitoring 'core/monitor/monitoring.bicep' = {
+module monitoringResources 'core/monitor/monitoring.bicep' = {
   name: 'monitoring'
   scope: resourceGroup
   params: {
     location: location
-    tags: tags_var
+    tags: resourceTags
     logAnalyticsName: '${prefix}-logworkspace'
     applicationInsightsName: '${prefix}-appinsights'
     applicationInsightsDashboardName: '${prefix}-appinsights-dashboard'
@@ -40,24 +41,38 @@ module monitoring 'core/monitor/monitoring.bicep' = {
 }
 
 // Storage for hosting static website
-module storage 'core/storage/storage-account.bicep' = {
+module storageAccount 'core/storage/storage-account.bicep' = {
   name: 'storage'
   scope: resourceGroup
   params: {
     name: '${toLower(take(replace(prefix, '-', ''), 17))}storage'
     location: location
-    tags: tags_var
+    tags: resourceTags
+  }
+}
+
+// Cosmos db
+module cosmosDatabase 'core/database/cosmos-db.bicep' = {
+  name: 'cosmos-db'
+  scope: resourceGroup
+  params: {
+    name: '${toLower(take(replace(prefix, '-', ''), 24))}-cosmos'
+    location: location
+    tags: resourceTags
+    databaseName: 'inventory'
+    containerName: 'items'
+    partitionKeyPath: '/category'
   }
 }
 
 // App Service Plan
-module appserviceplan 'core/host/appserviceplan.bicep' = {
+module appServicePlan 'core/host/appserviceplan.bicep' = {
   name: 'appserviceplan'
   scope: resourceGroup
   params: {
     name: '${prefix}-plan'
     location: location
-    tags: tags_var
+    tags: resourceTags
     sku: {
       name: 'Y1'
       tier: 'Dynamic'
@@ -68,45 +83,56 @@ module appserviceplan 'core/host/appserviceplan.bicep' = {
   }
 }
 
+
+
 // Azure Functions
-module function 'core/host/functions.bicep' = {
+module functionApp 'core/host/functions.bicep' = {
   name: 'function'
   scope: resourceGroup
   params: {
     name: '${prefix}-function-app'
     location: location
-    tags: union(tags_var, { 'azd-service-name': 'api' })
+    tags: union(resourceTags, { 'azd-service-name': 'api' })
     alwaysOn: false
     appSettings: {
       AzureWebJobsFeatureFlags: 'EnableWorkerIndexing'
+      COSMOSDB_ENDPOINT: cosmosDatabase.outputs.cosmosEndpoint
+      COSMOSDB_DATABASE: cosmosDatabase.outputs.cosmosDatabaseName
+      COSMOSDB_CONTAINER: cosmosDatabase.outputs.cosmosContainerName
     }
-    applicationInsightsName: monitoring.outputs.applicationInsightsName
-    appServicePlanId: appserviceplan.outputs.id
+    applicationInsightsName: monitoringResources.outputs.applicationInsightsName
+    appServicePlanId: appServicePlan.outputs.id
     runtimeName: 'python'
     runtimeVersion: '3.10'
-    storageAccountName: storage.outputs.name
+    storageAccountName: storageAccount.outputs.name
     skipRoleAssignment: true  // Add this to prevent role assignment errors
   }
 }
 
-// Function app diagnostics
-module functionDiagnostics 'core/host/app-diagnostics.bicep' = {
-  name: '${name}-functions-diagnostics'
+module cosmosRoleAssignment 'core/database/cosmos-db-role-assignment.bicep' = {
+  name: 'cosmos-role-assignment'
   scope: resourceGroup
   params: {
-    appName: function.outputs.name
-    kind: 'functionapp'
-    diagnosticWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    principalId: functionApp.outputs.identityPrincipalId
+    cosmosAccountName: cosmosDatabase.outputs.cosmosAccountName
+    roleType: 'contributor' 
   }
-  dependsOn: [
-    function
-    monitoring
-  ]
+}
+// Function app diagnostics
+module functionDiagnostics 'core/host/app-diagnostics.bicep' = {
+  name: 'functionDiagnostics'
+  scope: resourceGroup
+  params: {
+    appName: functionApp.outputs.name
+    kind: 'functionapp'
+    diagnosticWorkspaceId: monitoringResources.outputs.logAnalyticsWorkspaceId
+  }
 }
 
 // Output
-output AZURE_LOCATION string = location
-output AZURE_TENANT_ID string = tenant().tenantId
-output RESOURCE_GROUP_ID string = resourceGroup.id
-output functionAppName string = function.outputs.name
-output functionAppEndpoint string = function.outputs.uri
+output azureLocation string = location
+output azureTenantId string = tenant().tenantId
+output resourceGroupId string = resourceGroup.id
+output functionAppName string = functionApp.outputs.name
+output functionAppEndpoint string = functionApp.outputs.uri
+output cosmosDbEndpoint string = cosmosDatabase.outputs.cosmosEndpoint
