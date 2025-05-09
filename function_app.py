@@ -6,18 +6,14 @@ from datetime import datetime
 
 from model.inventory_item import Item
 from service.cosmosdb_service import CosmosService
+from service.dependency import get_cosmos_client
 
 app = FastAPI()
 
-def get_cosmos_service():
-    try:
-        return CosmosService()
-    except Exception as e:
-        logging.error(f"Failed to initialize Cosmos service: {e}")
-        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
+def get_cosmos_service(client=Depends(get_cosmos_client)):
+    return CosmosService(client)
 
-
-@app.post("/api/inventory", response_model=Item, status_code=status.HTTP_201_CREATED)
+@app.post("/api/item", response_model=Item, status_code=status.HTTP_201_CREATED)
 async def create_inventory_item(item: Item, cosmos_service: CosmosService = Depends(get_cosmos_service)):
     try:
         return await cosmos_service.create_item(item)
@@ -27,7 +23,7 @@ async def create_inventory_item(item: Item, cosmos_service: CosmosService = Depe
         logging.error(f"Error creating item: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-@app.get("/api/inventory", response_model=List[Item])
+@app.get("/api/items", response_model=List[Item])
 async def list_inventory_items(
     category: Optional[str] = None, 
     cosmos_service: CosmosService = Depends(get_cosmos_service)
@@ -38,7 +34,7 @@ async def list_inventory_items(
         logging.error(f"Error listing items: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-@app.get("/api/inventory/{item_id}", response_model=Item)
+@app.get("/api/item/{item_id}", response_model=Item)
 async def get_inventory_item(
     item_id: str, 
     category: str, 
@@ -52,7 +48,7 @@ async def get_inventory_item(
         )
     return item
 
-@app.put("/api/inventory/{item_id}", response_model=Item)
+@app.put("/api/item/{item_id}", response_model=Item)
 async def update_inventory_item(
     item_id: str, 
     item_update: Item,
@@ -74,7 +70,7 @@ async def update_inventory_item(
         logging.error(f"Error updating item: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-@app.delete("/api/inventory/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/api/item/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_inventory_item(
     item_id: str, 
     category: str,
