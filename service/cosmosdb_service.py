@@ -1,62 +1,127 @@
-import os
 import logging
-from typing import List, Optional
-from azure.cosmos import exceptions  # Import from main cosmos package
+from typing import List, Optional, Dict, Tuple
+from fastapi.encoders import jsonable_encoder
+from azure.cosmos import exceptions
 from model.inventory_item import Item
+from service.cosmosdb_client_manager import CosmosClientManager
 
-class CosmosService:
-    def __init__(self, client=None):
-        """Initialize service with client"""
-        self.client = client
-        self.database_name = os.environ.get("COSMOSDB_DATABASE", "inventory")
-        self.container_name = os.environ.get("COSMOSDB_CONTAINER", "items")
-        
-        # Database and container clients will be initialized when needed
-        self.database = None
-        self.container = None
-    
-    async def _ensure_initialized(self):
-        """Ensure database and container clients are initialized"""
-        if self.database is None:
-            self.database = self.client.get_database_client(self.database_name)
-            self.container = self.database.get_container_client(self.container_name)
-    
+class CosmosService(CosmosClientManager):
     async def create_item(self, item: Item) -> Item:
-        """Create a new inventory item in Cosmos DB"""
         await self._ensure_initialized()
         try:
-            data = item.to_dict()
-            response = await self.container.create_item(body=data)
-            return Item.from_dict(response)
+            data = jsonable_encoder(item)
+            response = await self.container.create_item(body=data, partition_key=item.category)
+            return Item(**response)
         except exceptions.CosmosResourceExistsError:
-            logging.error(f"Item with id {item.id} already exists")
-            raise ValueError(f"Item with id {item.id} already exists")
-        
-    async def list_items(self, category: Optional[str] = None, max_items: int = 100) -> List[Item]:
-        """List inventory items, optionally filtered by category"""
+            msg = f"Item with id {item.id} already exists"
+            logging.error(msg)
+            raise ValueError(msg)
+
+    async def batch_create_items(self, items: List[Item]) -> List[Item]:
         await self._ensure_initialized()
-        
+        items_by_category = {}
+        for item in items:
+            items_by_category.setdefault(item.category, []).append(item)
+        created_items = []
+        for category, category_items in items_by_category.items():
+            batch_operations = [("create", (jsonable_encoder(i),), {}) for i in category_items]
+            try:
+                results = await self.container.execute_item_batch(batch_operations=batch_operations, partition_key=category)
+                created_items.extend(Item(**r) for r in results)
+            except exceptions.CosmosBatchOperationError as e:
+                i = e.error_index
+                logging.error(f"Batch failed: {batch_operations[i]}, response: {e.operation_responses[i]}")
+                raise ValueError(f"Batch failed: {e.operation_responses[i]}")
+        return created_items
+
+    async def update_item(self, item: Item) -> Item:
+        await self._ensure_initialized()
+        try:
+            data = jsonable_encoder(item)
+            response = await self.container.replace_item(item=item.id, body=data, partition_key=item.category)
+            return Item(**response)
+        except exceptions.CosmosResourceNotFoundError:
+            msg = f"Item with id {item.id} not found"
+            logging.error(msg)
+            raise ValueError(msg)
+
+    async def batch_update_items(self, items: List[Item]) -> List[Item]:
+        await self._ensure_initialized()
+        items_by_category = {}
+        for item in items:
+            items_by_category.setdefault(item.category, []).append(item)
+        updated_items = []
+        for category, category_items in items_by_category.items():
+            batch_operations = [("replace", (i.id, jsonable_encoder(i)), {}) for i in category_items]
+            try:
+                results = await self.container.execute_item_batch(batch_operations=batch_operations, partition_key=category)
+                updated_items.extend(Item(**r) for r in results)
+            except exceptions.CosmosBatchOperationError as e:
+                i = e.error_index
+                logging.error(f"Batch failed: {batch_operations[i]}, response: {e.operation_responses[i]}")
+                raise ValueError(f"Batch failed: {e.operation_responses[i]}")
+        return updated_items
+
+    async def get_item(self, item_id: str, category: str) -> Optional[Item]:
+        await self._ensure_initialized()
+        try:
+            response = await self.container.read_item(item=item_id, partition_key=category)
+            return Item(**response)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+
+    async def batch_read_items(self, items: List[Dict[str, str]]) -> List[Item]:
+        await self._ensure_initialized()
+        items_by_category = {}
+        for item in items:
+            items_by_category.setdefault(item["category"], []).append(item)
+        read_items = []
+        for category, category_items in items_by_category.items():
+            batch_operations = [("read", (i["id"],), {}) for i in category_items]
+            try:
+                results = await self.container.execute_item_batch(batch_operations=batch_operations, partition_key=category)
+                read_items.extend(Item(**r) for r in results)
+            except exceptions.CosmosBatchOperationError as e:
+                i = e.error_index
+                logging.error(f"Batch failed: {batch_operations[i]}, response: {e.operation_responses[i]}")
+                raise ValueError(f"Batch failed: {e.operation_responses[i]}")
+        return read_items
+
+    async def delete_item(self, item_id: str, category: str) -> bool:
+        await self._ensure_initialized()
+        try:
+            await self.container.delete_item(item=item_id, partition_key=category)
+            return True
+        except exceptions.CosmosResourceNotFoundError:
+            return False
+
+    async def batch_delete_items(self, items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        await self._ensure_initialized()
+        items_by_category = {}
+        for item in items:
+            items_by_category.setdefault(item["category"], []).append(item)
+        deleted_items = []
+        for category, category_items in items_by_category.items():
+            batch_operations = [("delete", (i["id"],), {}) for i in category_items]
+            try:
+                await self.container.execute_item_batch(batch_operations=batch_operations, partition_key=category)
+                deleted_items.extend(category_items)
+            except exceptions.CosmosBatchOperationError as e:
+                i = e.error_index
+                logging.error(f"Batch failed: {batch_operations[i]}, response: {e.operation_responses[i]}")
+                raise ValueError(f"Batch failed: {e.operation_responses[i]}")
+        return deleted_items
+
+    async def list_items(self, category: Optional[str] = None, max_items: int = 100, continuation_token: Optional[str] = None) -> Tuple[List[Item], Optional[str]]:
+        await self._ensure_initialized()
+        query = "SELECT * FROM c"
+        parameters = []
         if category:
-            query = "SELECT * FROM c WHERE c.category = @category"
-            parameters = [{"name": "@category", "value": category}]
-            # When category is provided, we can query within a single partition
-            query_items = self.container.query_items(
-                query=query,
-                parameters=parameters,
-                max_item_count=max_items
-            )
-        else:
-            query = "SELECT * FROM c"
-            parameters = []
-            # When no category is provided, we need to enable cross-partition query
-            query_items = self.container.query_items(
-                query=query,
-                parameters=parameters,
-                max_item_count=max_items # Enable cross-partition query
-            )
-        
+            query += " WHERE c.category = @category"
+            parameters.append({"name": "@category", "value": category})
         items = []
-        async for item in query_items:
-            items.append(Item.from_dict(item))
-            
-        return items
+        query_response = self.container.query_items(query=query, parameters=parameters, max_item_count=max_items, continuation=continuation_token)
+        async for item in query_response:
+            items.append(Item(**item))
+        next_token = getattr(query_response, 'response_headers', {}).get('x-ms-continuation')
+        return items, next_token

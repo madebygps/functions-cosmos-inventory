@@ -73,7 +73,7 @@ cp local-sample.settings.json local.settings.json
 
 Update `local.settings.json` with your Azure Cosmos DB information:
 
-#### If using Azure Cosmos DB:
+#### If using Azure Cosmos DB
 
 ```json
 {
@@ -89,7 +89,7 @@ Update `local.settings.json` with your Azure Cosmos DB information:
 }
 ```
 
-#### If using Cosmos DB Emulator:
+#### If using Cosmos DB Emulator
 
 ```json
 {

@@ -3,168 +3,142 @@ import json
 import asyncio
 import logging
 from azure.cosmos.aio import CosmosClient
-from azure.cosmos import exceptions, PartitionKey
+from azure.cosmos import exceptions
 from azure.identity import DefaultAzureCredential
 from pathlib import Path
+
+from fastapi.encoders import jsonable_encoder
 from model.inventory_item import Item
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuration (replace with your actual values or use environment variables)
-COSMOS_ENDPOINT = os.getenv("COSMOS_ENDPOINT")
-DATABASE_NAME = os.getenv("COSMOS_DB_NAME")
-CONTAINER_NAME = os.getenv("COSMOS_CONTAINER_NAME")
+COSMOS_ENDPOINT = os.environ.get('COSMOSDB_ENDPOINT', 'https://serverlessinvenghyi746x3-cosmos.documents.azure.com:443/')
+DATABASE_NAME = os.environ.get('COSMOSDB_DATABASE', 'inventory')
+CONTAINER_NAME = os.environ.get('COSMOSDB_CONTAINER', 'items')
+BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '10'))
+THROTTLE_THRESHOLD = float(os.environ.get('THROTTLE_THRESHOLD', '20'))
+DATA_FILE_PATH = os.environ.get('DATA_FILE_PATH', 'sample_data.json')
 
 
-async def create_database_if_not_exists(client):
-    """Create the database if it doesn't exist."""
+async def get_existing_items(container, query="SELECT c.name FROM c"):
+    """Query existing items to avoid duplicates"""
+    existing_names = set()
+    
+    async for item in container.query_items(query=query, parameters=[]):
+        existing_names.add(item['name'])
+    
+    return existing_names
+
+
+async def insert_item(container, item):
+    """Insert a single item with RU tracking"""
     try:
-        database = await client.create_database_if_not_exists(id=DATABASE_NAME)
-        logger.info(f"Database '{DATABASE_NAME}' ensured")
-        return database
-    except exceptions.CosmosHttpResponseError as e:
-        logger.error(f"Failed to create database: {e}")
+        item_dict = jsonable_encoder(item)
+        response = await container.create_item(body=item_dict, partition_key=item.category)
+        request_charge = response['_response_headers']['x-ms-request-charge']
+        logger.info(f"Added item: {item.name} (ID: {item.id}) - {request_charge} RUs")
+        
+        return float(request_charge)
+    except exceptions.CosmosResourceExistsError:
+        logger.info(f"Item already exists: {item.name}")
+        return 0
+    except Exception as e:
+        logger.error(f"Error creating item {item.name}: {str(e)}")
         raise
 
-async def create_container_if_not_exists(database):
-    """Create the container if it doesn't exist."""
-    try:
-        # Consider setting autoscale ughput for production workloads
-        container = await database.create_container_if_not_exists(
-            id=CONTAINER_NAME,
-            partition_key=PartitionKey(path="/category"),
-            offer_throughput=400  # Minimum RU/s
-        )
-        logger.info(f"Container '{CONTAINER_NAME}' ensured")
-        return container
-    except exceptions.CosmosHttpResponseError as e:
-        logger.error(f"Failed to create container: {e}")
-        raise
 
-def map_json_to_item(item_data):
-    """Map fields from JSON structure to Item model structure"""
-    mapped_data = item_data.copy()
-
-    return mapped_data
-
-async def load_sample_data(container):
+async def load_sample_data(container, data_file_path, batch_size, throttle_threshold):
     """Load sample data from the JSON file into the container."""
     try:
-        # Check if sample_data.json exists
-        sample_data_path = Path("sample_data.json")
-        if not sample_data_path.exists():
-            logger.error(f"Sample data file not found: {sample_data_path.absolute()}")
-            raise FileNotFoundError(f"Could not find {sample_data_path.absolute()}")
+        file_path = Path(data_file_path)
+        if not file_path.exists():
+            logger.error(f"Sample data file not found: {file_path.absolute()}")
+            raise FileNotFoundError(f"Could not find {file_path.absolute()}")
         
-        # Load JSON data from file
-        with open(sample_data_path, 'r') as file:
+        with open(file_path, 'r') as file:
             sample_items_raw = json.load(file)
         
-        logger.info(f"Loaded {len(sample_items_raw)} items from sample_data.json")
+        logger.info(f"Loaded {len(sample_items_raw)} items from {data_file_path}")
         
-        # First, collect all existing item names
-        query = "SELECT c.name FROM c"
-        existing_names = set()
-        async for item in container.query_items(query):
-            existing_names.add(item['name'])
+        existing_names = await get_existing_items(container)
+        logger.info(f"Found {len(existing_names)} existing items in the container")
         
-        # Create validated Item objects
         items_to_insert = []
         invalid_items = []
         for item_data in sample_items_raw:
             try:
-                # Map JSON fields to Item model fields
-                mapped_data = map_json_to_item(item_data)
-                
-                # Skip items that already exist
-                if mapped_data.get('name') in existing_names:
-                    logger.info(f"Skipping existing item: {mapped_data.get('name')}")
+                if item_data.get('name') in existing_names:
+                    logger.info(f"Skipping existing item: {item_data.get('name')}")
                     continue
-                
-                # Create a validated Item object
-                item = Item(**mapped_data)
+        
+                item = Item(**item_data)
                 items_to_insert.append(item)
             except Exception as e:
                 invalid_items.append((item_data.get('name', 'Unknown'), str(e)))
                 logger.warning(f"Invalid item data: {item_data.get('name', 'Unknown')}. Error: {str(e)}")
         
-        # Log validation results
         if invalid_items:
             logger.warning(f"Skipped {len(invalid_items)} invalid items")
             for name, error in invalid_items:
                 logger.debug(f"- {name}: {error}")
         
-        # Batch process items with RU monitoring
+        logger.info(f"Preparing to insert {len(items_to_insert)} new items")
+        
         total_rus = 0
-        batch_size = 10  # Adjust based on your item size and RU capacity
         
         for i in range(0, len(items_to_insert), batch_size):
             batch = items_to_insert[i:i + batch_size]
+            batch_rus = 0
             
-            # Process each item in the batch
+            logger.info(f"Processing batch {i//batch_size + 1} of {(len(items_to_insert) + batch_size - 1)//batch_size}")
+
             for item in batch:
                 try:
-                    # Use parameterized query to check if item exists (extra safety)
-                    query = "SELECT * FROM c WHERE c.name = @name"
-                    parameters = [{"name": "@name", "value": item.name}]
-                    
-                    # Convert to dictionary for Cosmos DB
-                    item_dict = item.to_dict()
-                    
-                    # Create the item
-                    response = await container.create_item(body=item_dict)
-                    
-                    # Track RU consumption
-                    request_charge = response['_response_headers']['x-ms-request-charge']
-                    total_rus += float(request_charge)
-                    
-                    logger.info(f"Added item: {item.name} (ID: {item.id}) - {request_charge} RUs")
-                    
-                    # If we're consuming too many RUs, add a small delay
-                    if float(request_charge) > 20:  # Adjust threshold as needed
-                        await asyncio.sleep(0.5)  # Throttle requests
-                
-                except exceptions.CosmosResourceExistsError:
-                    logger.info(f"Item already exists: {item.name}")
+                    request_charge = await insert_item(container, item)
+                    total_rus += request_charge
+                    batch_rus += request_charge
                 except Exception as e:
-                    logger.error(f"Error creating item {item.name}: {str(e)}")
+                    logger.error(f"Failed to insert item {item.name}: {str(e)}")
+            
+            if batch_rus > throttle_threshold * len(batch):
+                logger.info(f"Throttling after batch consumed {batch_rus:.2f} RUs")
+                await asyncio.sleep(1.0) 
         
         logger.info(f"Sample data loading completed. {len(items_to_insert)} items inserted. Total RU consumption: {total_rus:.2f}")
-    except FileNotFoundError as e:
-        logger.error(f"File error: {e}")
-        raise
-    except exceptions.CosmosHttpResponseError as e:
-        logger.error(f"Cosmos DB error: {e}")
-        raise
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Error loading sample data: {str(e)}")
         raise
 
+
 async def main():
-    """Main function to initialize DB and load data."""
+    """Main function to load data into existing container."""
     try:
-        # Always use DefaultAzureCredential 
         credential = DefaultAzureCredential()
-        client = CosmosClient(COSMOS_ENDPOINT, credential=credential)
-        logger.info("Using Azure identity authentication")
-        
-        async with client:
-            # Create database and container if they don't exist
-            database = await create_database_if_not_exists(client)
-            container = await create_container_if_not_exists(database)
+    
+        async with CosmosClient(COSMOS_ENDPOINT, credential=credential) as client:
+            logger.info(f"Connecting to {COSMOS_ENDPOINT} using Azure identity authentication")
             
-            # Load the sample data
-            await load_sample_data(container)
+            database = client.get_database_client(DATABASE_NAME)
+            container = database.get_container_client(CONTAINER_NAME)
+            
+            logger.info(f"Connected to database '{DATABASE_NAME}' and container '{CONTAINER_NAME}'")
+            
+            await load_sample_data(
+                container,
+                data_file_path=DATA_FILE_PATH,
+                batch_size=BATCH_SIZE,
+                throttle_threshold=THROTTLE_THRESHOLD
+            )
             
             logger.info("Script completed successfully")
     except Exception as e:
         logger.error(f"Script failed: {e}")
         raise
+
+
 if __name__ == "__main__":
-    # Run the async main function
     asyncio.run(main())
