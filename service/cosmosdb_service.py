@@ -1,5 +1,6 @@
 import logging
-from typing import List, Optional, Dict, Tuple
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Tuple, Any
 from fastapi.encoders import jsonable_encoder
 from azure.cosmos import exceptions
 from model.inventory_item import Item
@@ -34,16 +35,68 @@ class CosmosService(CosmosClientManager):
                 raise ValueError(f"Batch failed: {e.operation_responses[i]}")
         return created_items
 
-    async def update_item(self, item: Item) -> Item:
+    async def update_item(self, item: Item, etag: Optional[str] = None) -> Item:
+        """Full replace with optimistic concurrency and timestamp logic."""
         await self._ensure_initialized()
+        # validate immutable fields
+        existing = await self.get_item(item.id, item.category)
+        if not existing:
+            raise ValueError(f"Item with id {item.id} not found")
+        if item.category != existing.category:
+            raise ValueError("Cannot change category on update")
+        if item.created_at != existing.created_at:
+            raise ValueError("Cannot modify created_at on update")
+        # set updated timestamp
+        item.updated_at = datetime.now(timezone.utc)
+        data = jsonable_encoder(item)
+        # concurrency control via ETag
+        options = {}
+        if etag:
+            options['etag'] = etag
+            options['match_condition'] = exceptions.MatchConditions.IfNotModified
         try:
-            data = jsonable_encoder(item)
-            response = await self.container.replace_item(item=item.id, body=data, partition_key=item.category)
+            response = await self.container.replace_item(
+                item=item.id,
+                body=data,
+                partition_key=item.category,
+                **options
+            )
             return Item(**response)
         except exceptions.CosmosResourceNotFoundError:
             msg = f"Item with id {item.id} not found"
             logging.error(msg)
             raise ValueError(msg)
+        except exceptions.CosmosHttpResponseError as e:
+            if isinstance(e, exceptions.CosmosAccessConditionFailedError):
+                raise ValueError("Update conflict: resource was modified by another process")
+            raise
+
+    async def patch_item(self, item_id: str, category: str, updates: Dict[str, Any], etag: Optional[str] = None) -> Item:
+        """Partial update via patch semantics, merging changes and then replace."""
+        await self._ensure_initialized()
+        existing = await self.container.read_item(item=item_id, partition_key=category)
+        # apply immutables check
+        if existing.get('category') != category:
+            raise ValueError("Cannot change category on patch")
+        if 'created_at' in updates and updates['created_at'] != existing.get('created_at'):
+            raise ValueError("Cannot modify created_at on patch")
+        # merge updates
+        for k, v in updates.items():
+            existing[k] = v
+        # update timestamp
+        existing['updated_at'] = datetime.now(timezone.utc).isoformat()
+        # concurrency control
+        options = {}
+        if etag:
+            options['etag'] = etag
+            options['match_condition'] = exceptions.MatchConditions.IfNotModified
+        response = await self.container.replace_item(
+            item=item_id,
+            body=existing,
+            partition_key=category,
+            **options
+        )
+        return Item(**response)
 
     async def batch_update_items(self, items: List[Item]) -> List[Item]:
         await self._ensure_initialized()
